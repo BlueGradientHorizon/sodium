@@ -1,30 +1,31 @@
 package net.caffeinemc.mods.sodium.client.render.immediate;
 
-import com.mojang.blaze3d.platform.GlStateManager;
+import com.mojang.blaze3d.buffers.BufferUsage;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.*;
+import net.caffeinemc.mods.sodium.api.util.ColorU8;
 import net.caffeinemc.mods.sodium.api.vertex.format.common.ColorVertex;
 import net.caffeinemc.mods.sodium.api.vertex.buffer.VertexBufferWriter;
 import net.caffeinemc.mods.sodium.api.util.ColorABGR;
 import net.caffeinemc.mods.sodium.api.util.ColorARGB;
-import net.caffeinemc.mods.sodium.api.util.ColorMixer;
 import net.minecraft.client.Camera;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.FogRenderer;
-import net.minecraft.client.renderer.ShaderInstance;
+import net.minecraft.client.renderer.*;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.ResourceProvider;
+import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.joml.Vector4f;
 import org.lwjgl.opengl.GL32C;
 import org.lwjgl.system.MemoryStack;
 
@@ -34,9 +35,9 @@ import java.util.Objects;
 
 public class CloudRenderer {
     private static final ResourceLocation CLOUDS_TEXTURE_ID = ResourceLocation.withDefaultNamespace("textures/environment/clouds.png");
+    public static final ShaderProgram CLOUDS = new ShaderProgram(ResourceLocation.fromNamespaceAndPath("sodium", "clouds"), DefaultVertexFormat.POSITION_COLOR, ShaderDefines.builder().build());
 
     private CloudTextureData textureData;
-    private ShaderInstance shaderProgram;
 
     private @Nullable CloudRenderer.CloudGeometry cachedGeometry;
 
@@ -47,9 +48,9 @@ public class CloudRenderer {
     public void render(Camera camera,
                        ClientLevel level,
                        Matrix4f projectionMatrix,
-                       PoseStack poseStack,
+                       Matrix4f modelView,
                        float ticks,
-                       float tickDelta)
+                       float tickDelta, int color)
     {
         float cloudHeight = level.effects().getCloudHeight();
 
@@ -76,7 +77,8 @@ public class CloudRenderer {
 
         // -1 if below clouds, +1 if above clouds
         var cloudType = Minecraft.getInstance().options.getCloudsType();
-        int orientation = cloudType == CloudStatus.FANCY ? (int) Math.signum(pos.y() - cloudHeight) : 0;
+        var relativeCloudY = cloudHeight - (float) pos.y() + 0.33F;
+        int orientation = cloudType == CloudStatus.FANCY ? (int) Math.signum(-relativeCloudY) : 0;
         var parameters = new CloudGeometryParameters(centerCellX, centerCellZ, cloudDistance, orientation, cloudType);
 
         CloudGeometry geometry = this.cachedGeometry;
@@ -86,6 +88,7 @@ public class CloudRenderer {
         }
 
         VertexBuffer vertexBuffer = geometry.vertexBuffer();
+
         if (vertexBuffer == null) {
             return;
         }
@@ -93,45 +96,32 @@ public class CloudRenderer {
         final float translateX = (float) (cloudCenterX - (centerCellX * 12));
         final float translateZ = (float) (cloudCenterZ - (centerCellZ * 12));
 
-        poseStack.pushPose();
+        Matrix4f modelViewMatrix = new Matrix4f(modelView);
+        modelViewMatrix.translate(-translateX, relativeCloudY, -translateZ);
 
-        var poseEntry = poseStack.last();
+        final var prevShaderFog = copyShaderFogParameters(RenderSystem.getShaderFog());
 
-        Matrix4f modelViewMatrix = poseEntry.pose();
-        modelViewMatrix.translate(-translateX, cloudHeight - (float) pos.y() + 0.33F, -translateZ);
-
-        final var prevShaderFogShape = RenderSystem.getShaderFogShape();
-        final var prevShaderFogEnd = RenderSystem.getShaderFogEnd();
-        final var prevShaderFogStart = RenderSystem.getShaderFogStart();
-
-        FogRenderer.setupFog(camera, FogRenderer.FogMode.FOG_TERRAIN, cloudDistance * 8, shouldUseWorldFog(level, pos), tickDelta);
+        FogParameters fogParameters = FogRenderer.setupFog(camera, FogRenderer.FogMode.FOG_TERRAIN, new Vector4f(prevShaderFog.red(), prevShaderFog.green(), prevShaderFog.blue(), prevShaderFog.alpha()), cloudDistance * 8, shouldUseWorldFog(level, pos), tickDelta);
+        RenderSystem.setShaderFog(fogParameters);
 
         boolean fastClouds = geometry.params().renderMode() == CloudStatus.FAST;
-        boolean fabulous = Minecraft.useShaderTransparency();
 
         if (fastClouds) {
             RenderSystem.disableCull();
         }
 
-        if (fabulous) {
-            Minecraft.getInstance().levelRenderer.getCloudsTarget().bindWrite(false);
-        }
-
-        Vec3 colorModulator = level.getCloudColor(tickDelta);
-        RenderSystem.setShaderColor((float) colorModulator.x, (float) colorModulator.y, (float) colorModulator.z, 0.8f);
+        RenderSystem.setShaderColor(ARGB.from8BitChannel(ARGB.red(color)), ARGB.from8BitChannel(ARGB.green(color)), ARGB.from8BitChannel(ARGB.blue(color)), 0.8F);
 
         vertexBuffer.bind();
 
-        RenderSystem.enableBlend();
-        RenderSystem.enableDepthTest();
-        RenderSystem.blendFuncSeparate(GlStateManager.SourceFactor.SRC_ALPHA, GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA,
-                GlStateManager.SourceFactor.ONE, GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA);
+        RenderType.clouds().setupRenderState();
         RenderSystem.depthFunc(GL32C.GL_LESS);
 
-        vertexBuffer.drawWithShader(modelViewMatrix, projectionMatrix, this.shaderProgram);
+        RenderSystem.setShader(CLOUDS);
+
+        vertexBuffer.drawWithShader(modelViewMatrix, projectionMatrix, RenderSystem.getShader());
 
         RenderSystem.depthFunc(GL32C.GL_LEQUAL);
-        RenderSystem.disableBlend();
 
         VertexBuffer.unbind();
 
@@ -139,24 +129,24 @@ public class CloudRenderer {
             RenderSystem.enableCull();
         }
 
-        if (fabulous) {
-            Minecraft.getInstance().getMainRenderTarget().bindWrite(false);
-        }
+        RenderType.clouds().clearRenderState();
+
 
         RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
 
-        RenderSystem.setShaderFogShape(prevShaderFogShape);
-        RenderSystem.setShaderFogEnd(prevShaderFogEnd);
-        RenderSystem.setShaderFogStart(prevShaderFogStart);
+        RenderSystem.setShaderFog(prevShaderFog);
+    }
 
-        poseStack.popPose();
+    private static FogParameters copyShaderFogParameters(FogParameters shaderFog) {
+        return new FogParameters(shaderFog.start(), shaderFog.end(), shaderFog.shape(), shaderFog.red(), shaderFog.green(), shaderFog.blue(), shaderFog.alpha());
     }
 
     private static @NotNull CloudGeometry rebuildGeometry(@Nullable CloudGeometry existingGeometry,
                                                           CloudGeometryParameters parameters,
                                                           CloudTextureData textureData)
     {
-        BufferBuilder bufferBuilder = Tesselator.getInstance().begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        BufferBuilder bufferBuilder = Tesselator.getInstance()
+                .begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
 
         var writer = VertexBufferWriter.of(bufferBuilder);
 
@@ -206,19 +196,24 @@ public class CloudRenderer {
             }
         }
 
-        MeshData builtBuffer = bufferBuilder.build();
+        @Nullable MeshData meshData = bufferBuilder.build();
+        @Nullable VertexBuffer vertexBuffer = null;
 
-        VertexBuffer vertexBuffer = null;
+        if (existingGeometry != null) {
+            vertexBuffer = existingGeometry.vertexBuffer();
+        }
 
-        if (builtBuffer != null) {
-            if (existingGeometry != null) {
-                vertexBuffer = existingGeometry.vertexBuffer();
-            }
+        if (meshData != null) {
             if (vertexBuffer == null) {
-                vertexBuffer = new VertexBuffer(VertexBuffer.Usage.DYNAMIC);
+                vertexBuffer = new VertexBuffer(BufferUsage.DYNAMIC_WRITE);
             }
 
-            uploadToVertexBuffer(vertexBuffer, builtBuffer);
+            uploadToVertexBuffer(vertexBuffer, meshData);
+        } else {
+            if (vertexBuffer != null) {
+                vertexBuffer.close();
+                vertexBuffer = null;
+            }
         }
 
         Tesselator.getInstance().clear();
@@ -349,7 +344,7 @@ public class CloudRenderer {
             long ptr = buffer;
             int count = 0;
 
-            int mixedColor = ColorMixer.mul(color, CloudFace.POS_Y.getColor());
+            int mixedColor = ColorABGR.mulRGB(color, CloudFace.POS_Y.getShade());
 
             ptr = writeVertex(ptr, x + 12.0f, 0.0f, z + 12.0f, mixedColor);
             ptr = writeVertex(ptr, x +  0.0f, 0.0f, z + 12.0f, mixedColor);
@@ -375,7 +370,7 @@ public class CloudRenderer {
                 }
 
                 final var vertices = VERTICES[face.ordinal()];
-                final int color = ColorMixer.mul(baseColor, face.getColor());
+                final int color = ColorABGR.mulRGB(baseColor, face.getShade());
 
                 for (int vertexIndex = 0; vertexIndex < 4; vertexIndex++) {
                     Vector3f vertex = vertices[interior ? 3 - vertexIndex : vertexIndex];
@@ -412,23 +407,15 @@ public class CloudRenderer {
         this.destroy();
 
         this.textureData = loadTextureData();
-
-        try {
-            this.shaderProgram = new ShaderInstance(resourceProvider, "clouds", DefaultVertexFormat.POSITION_COLOR);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     public void destroy() {
-        if (this.shaderProgram != null) {
-            this.shaderProgram.close();
-            this.shaderProgram = null;
-        }
-
         if (this.cachedGeometry != null) {
             var vertexBuffer = this.cachedGeometry.vertexBuffer();
-            vertexBuffer.close();
+
+            if (vertexBuffer != null) {
+                vertexBuffer.close();
+            }
 
             this.cachedGeometry = null;
         }
@@ -458,24 +445,24 @@ public class CloudRenderer {
     }
 
     private enum CloudFace {
-        NEG_Y(ColorABGR.pack(0.7F, 0.7F, 0.7F, 1.0f)),
-        POS_Y(ColorABGR.pack(1.0f, 1.0f, 1.0f, 1.0f)),
-        NEG_X(ColorABGR.pack(0.9F, 0.9F, 0.9F, 1.0f)),
-        POS_X(ColorABGR.pack(0.9F, 0.9F, 0.9F, 1.0f)),
-        NEG_Z(ColorABGR.pack(0.8F, 0.8F, 0.8F, 1.0f)),
-        POS_Z(ColorABGR.pack(0.8F, 0.8F, 0.8F, 1.0f));
+        NEG_Y(0.7F),
+        POS_Y(1.0f),
+        NEG_X(0.9F),
+        POS_X(0.9F),
+        NEG_Z(0.8F),
+        POS_Z(0.8F);
 
         public static final CloudFace[] VALUES = CloudFace.values();
         public static final int COUNT = VALUES.length;
 
-        private final int color;
+        private final int shade;
 
-        CloudFace(int color) {
-            this.color = color;
+        CloudFace(float shade) {
+            this.shade = ColorU8.normalizedFloatToByte(shade);
         }
 
-        public int getColor() {
-            return this.color;
+        public int getShade() {
+            return this.shade;
         }
     }
 
@@ -530,7 +517,7 @@ public class CloudRenderer {
             for (int x = 0; x < width; x++) {
                 for (int z = 0; z < height; z++) {
                     int index = this.getCellIndex(x, z);
-                    int color = texture.getPixelRGBA(x, z);
+                    int color = texture.getPixel(x, z);
 
                     this.colors[index] = color;
 
@@ -593,7 +580,7 @@ public class CloudRenderer {
             x = wrapTexelCoord(x, 0, image.getWidth() - 1);
             z = wrapTexelCoord(z, 0, image.getHeight() - 1);
 
-            return image.getPixelRGBA(x, z);
+            return image.getPixel(x, z);
         }
 
         private static int wrapTexelCoord(int coord, int min, int max) {
@@ -628,7 +615,7 @@ public class CloudRenderer {
         }
     }
 
-    public record CloudGeometry(VertexBuffer vertexBuffer, CloudGeometryParameters params) {
+    public record CloudGeometry(@Nullable VertexBuffer vertexBuffer, CloudGeometryParameters params) {
 
     }
 

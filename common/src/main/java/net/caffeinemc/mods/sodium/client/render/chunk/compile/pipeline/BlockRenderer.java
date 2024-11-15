@@ -2,6 +2,8 @@ package net.caffeinemc.mods.sodium.client.render.chunk.compile.pipeline;
 
 import net.caffeinemc.mods.sodium.api.util.ColorABGR;
 import net.caffeinemc.mods.sodium.api.util.ColorARGB;
+import net.caffeinemc.mods.sodium.api.util.ColorMixer;
+import net.caffeinemc.mods.sodium.client.compatibility.workarounds.Workarounds;
 import net.caffeinemc.mods.sodium.client.model.color.ColorProvider;
 import net.caffeinemc.mods.sodium.client.model.color.ColorProviderRegistry;
 import net.caffeinemc.mods.sodium.client.model.light.LightMode;
@@ -19,7 +21,6 @@ import net.caffeinemc.mods.sodium.client.render.chunk.terrain.material.parameter
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.TranslucentGeometryCollector;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.builder.ChunkMeshBufferBuilder;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkVertexEncoder;
-import net.caffeinemc.mods.sodium.client.render.frapi.helper.ColorHelper;
 import net.caffeinemc.mods.sodium.client.render.frapi.mesh.MutableQuadViewImpl;
 import net.caffeinemc.mods.sodium.client.render.frapi.render.AbstractBlockRenderContext;
 import net.caffeinemc.mods.sodium.client.render.texture.SpriteFinderCache;
@@ -84,7 +85,7 @@ public class BlockRenderer extends AbstractBlockRenderContext {
 
         this.posOffset.set(origin.getX(), origin.getY(), origin.getZ());
         if (state.hasOffsetFunction()) {
-            Vec3 modelOffset = state.getOffset(this.level, pos);
+            Vec3 modelOffset = state.getOffset(pos);
             this.posOffset.add((float) modelOffset.x, (float) modelOffset.y, (float) modelOffset.z);
         }
 
@@ -148,7 +149,7 @@ public class BlockRenderer extends AbstractBlockRenderContext {
                 colorProvider.getColors(this.slice, this.pos, this.scratchPos, this.state, quad, vertexColors);
 
                 for (int i = 0; i < 4; i++) {
-                    quad.color(i, ColorHelper.multiplyColor(vertexColors[i], quad.color(i)));
+                    quad.color(i, ColorMixer.mulComponentWise(vertexColors[i], quad.color(i)));
                 }
             }
         }
@@ -184,6 +185,7 @@ public class BlockRenderer extends AbstractBlockRenderContext {
 
         // attempt render pass downgrade if possible
         var pass = material.pass;
+
         var downgradedPass = attemptPassDowngrade(atlasSprite, pass);
         if (downgradedPass != null) {
             pass = downgradedPass;
@@ -225,7 +227,11 @@ public class BlockRenderer extends AbstractBlockRenderContext {
         return true;
     }
 
-    private TerrainRenderPass attemptPassDowngrade(TextureAtlasSprite sprite, TerrainRenderPass pass) {
+    private @Nullable TerrainRenderPass attemptPassDowngrade(TextureAtlasSprite sprite, TerrainRenderPass pass) {
+        if (Workarounds.isWorkaroundEnabled(Workarounds.Reference.INTEL_DEPTH_BUFFER_COMPARISON_UNRELIABLE)) {
+            return null;
+        }
+
         boolean attemptDowngrade = true;
         boolean hasNonOpaqueVertex = false;
 

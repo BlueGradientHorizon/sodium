@@ -6,7 +6,7 @@
   "description" : "Sodium is a powerful rendering engine for Minecraft which greatly improves frame rates and micro-stutter, while fixing many graphical issues",
   "authors" : [
     {
-      "name" : "@jellysquid3",
+      "name" : "JellySquid (jellysquid3)",
       "contact" : {
         "email" : "jellysquid@pm.me",
         "homepage" : "https://jellysquid.me"
@@ -14,32 +14,33 @@
     }
   ],
   "contributors" : [
-    "@IMS212",
-    "@bytzo",
-    "@PepperCode1",
-    "@FlashyReese",
-    "@altrisi",
-    "@Grayray75",
-    "@Madis0",
-    "@Johni0702",
-    "@comp500",
-    "@coderbot16",
-    "@Moulberry",
-    "@MCRcortex",
-    "@Altirix",
-    "@embeddedt",
-    "@pajicadvance",
-    "@Kroppeb",
-    "@douira",
-    "@burgerindividual",
-    "@TwistedZero",
-    "@Leo40Git",
-    "@haykam821"
+    "IMS212",
+    "bytzo",
+    "PepperCode1",
+    "FlashyReese",
+    "altrisi",
+    "Grayray75",
+    "Madis0",
+    "Johni0702",
+    "comp500",
+    "coderbot16",
+    "Moulberry",
+    "MCRcortex",
+    "Altirix",
+    "embeddedt",
+    "pajicadvance",
+    "Kroppeb",
+    "douira",
+    "burgerindividual",
+    "TwistedZero",
+    "Leo40Git",
+    "haykam821",
+    "muzikbike"
   ],
   "contact" : {
-    "homepage" : "https://github.com/CaffeineMC/sodium-fabric",
-    "sources" : "https://github.com/CaffeineMC/sodium-fabric",
-    "issues" : "https://github.com/CaffeineMC/sodium-fabric/issues"
+    "homepage" : "https://github.com/CaffeineMC/sodium",
+    "sources" : "https://github.com/CaffeineMC/sodium",
+    "issues" : "https://github.com/CaffeineMC/sodium/issues"
   },
   "license" : "Polyform-Shield-1.0.0",
   "icon" : "sodium-icon.png",
@@ -58,19 +59,18 @@
       "links" : {
         "modmenu.donate" : "https://caffeinemc.net/donate",
         "modmenu.discord" : "https://caffeinemc.net/discord",
-        "modmenu.github_releases" : "https://github.com/CaffeineMC/sodium-fabric/releases",
+        "modmenu.github_releases" : "https://github.com/CaffeineMC/sodium/releases",
         "modmenu.kofi" : "https://caffeinemc.net/donate",
         "modmenu.modrinth" : "https://modrinth.com/mod/sodium"
       }
     }
   },
-  "accessWidener" : "sodium.accesswidener",
+  "accessWidener" : "sodium-fabric.accesswidener",
   "mixins" : [
-    "sodium.mixins.json",
+    "sodium-common.mixins.json",
     "sodium-fabric.mixins.json"
   ],
   "depends" : {
-    "minecraft" : ["1.21", "1.21.1"],
     "fabricloader" : ">=0.12.0",
     "fabric-block-view-api-v2" : "*",
     "fabric-renderer-api-v1" : "*",
