@@ -199,7 +199,7 @@ public class SodiumWorldRenderer {
         }
         boolean cameraLocationChanged = !pos.equals(this.lastCameraPos);
         boolean cameraAngleChanged = pitch != this.lastCameraPitch || yaw != this.lastCameraYaw || fogDistance != this.lastFogDistance;
-        boolean cameraProjectionChanged = !projectionMatrix.equals(this.lastProjectionMatrix);
+        boolean cameraProjectionChanged = !projectionMatrix.equals(this.lastProjectionMatrix, 0.0001f);
 
         this.lastProjectionMatrix = projectionMatrix;
 
@@ -212,7 +212,7 @@ public class SodiumWorldRenderer {
 
         this.lastFogDistance = fogDistance;
 
-        this.renderSectionManager.updateCameraState(pos, camera);
+        this.renderSectionManager.prepareFrame(pos);
 
         if (cameraLocationChanged) {
             profiler.popPush("translucent_triggering");

@@ -1,6 +1,7 @@
 package net.caffeinemc.mods.sodium.client.render.chunk;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.*;
 import it.unimi.dsi.fastutil.objects.*;
 import net.caffeinemc.mods.sodium.client.SodiumClientMod;
@@ -13,7 +14,9 @@ import net.caffeinemc.mods.sodium.client.render.chunk.compile.ChunkSortOutput;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.estimation.JobDurationEstimator;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.estimation.MeshResultSize;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.estimation.MeshTaskSizeEstimator;
-import net.caffeinemc.mods.sodium.client.render.chunk.compile.executor.*;
+import net.caffeinemc.mods.sodium.client.render.chunk.compile.executor.ChunkBuilder;
+import net.caffeinemc.mods.sodium.client.render.chunk.compile.executor.ChunkJobCollector;
+import net.caffeinemc.mods.sodium.client.render.chunk.compile.executor.ChunkJobResult;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.tasks.ChunkBuilderMeshingTask;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.tasks.ChunkBuilderSortingTask;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.tasks.ChunkBuilderTask;
@@ -35,6 +38,7 @@ import net.caffeinemc.mods.sodium.client.render.texture.SpriteUtil;
 import net.caffeinemc.mods.sodium.client.render.util.RenderAsserts;
 import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
 import net.caffeinemc.mods.sodium.client.render.viewport.Viewport;
+import net.caffeinemc.mods.sodium.client.services.PlatformRuntimeInformation;
 import net.caffeinemc.mods.sodium.client.util.MathUtil;
 import net.caffeinemc.mods.sodium.client.util.task.CancellationToken;
 import net.caffeinemc.mods.sodium.client.world.LevelSlice;
@@ -110,11 +114,13 @@ public class RenderSectionManager {
     private boolean cameraChanged = false;
     private boolean needsFrustumTaskListUpdate = true;
 
-    private @Nullable BlockPos cameraBlockPos;
     private @Nullable Vector3dc cameraPosition;
 
     private final ExecutorService asyncCullExecutor = Executors.newSingleThreadExecutor(RenderSectionManager::makeAsyncCullThread);
     private final ObjectArrayList<AsyncRenderTask<?>> pendingTasks = new ObjectArrayList<>();
+    private GlobalCullTask pendingGlobalCullTask = null;
+    private final IntArrayList concurrentlySubmittedTasks = new IntArrayList();
+
     private SectionTree renderTree = null;
     private TaskSectionTree globalTaskTree = null;
     private final Map<CullType, SectionTree> cullResults = new EnumMap<>(CullType.class);
@@ -141,11 +147,12 @@ public class RenderSectionManager {
         this.renderableSectionTree = new RemovableMultiForest(renderDistance);
 
         this.importantTasks = new EnumMap<>(DeferMode.class);
-        this.importantTasks.put(DeferMode.ZERO_FRAMES, new ReferenceLinkedOpenHashSet<>());
-        this.importantTasks.put(DeferMode.ONE_FRAME, new ReferenceLinkedOpenHashSet<>());
+        for (var deferMode : DeferMode.values()) {
+            this.importantTasks.put(deferMode, new ReferenceLinkedOpenHashSet<>());
+        }
     }
 
-    public void updateCameraState(Vector3dc cameraPosition, Camera camera) {
+    public void prepareFrame(Vector3dc cameraPosition) {
         var now = System.nanoTime();
         this.lastFrameDuration = now - this.lastFrameAtTime;
         this.lastFrameAtTime = now;
@@ -160,7 +167,6 @@ public class RenderSectionManager {
         this.needsRenderListUpdate |= this.cameraChanged;
         this.needsFrustumTaskListUpdate |= this.needsRenderListUpdate;
 
-        this.cameraBlockPos = camera.getBlockPosition();
         this.cameraPosition = cameraPosition;
     }
 
@@ -181,7 +187,7 @@ public class RenderSectionManager {
             this.cullResults.remove(CullType.FRUSTUM);
 
             this.pendingTasks.removeIf(task -> {
-                if (task instanceof CullTask<?> cullTask && cullTask.getCullType() == CullType.FRUSTUM) {
+                if (task instanceof FrustumCullTask cullTask) {
                     cullTask.setCancelled();
                     return true;
                 }
@@ -219,6 +225,8 @@ public class RenderSectionManager {
             task.getResult();
         }
         this.pendingTasks.clear();
+        this.pendingGlobalCullTask = null;
+        this.concurrentlySubmittedTasks.clear();
 
         var tree = new VisibleChunkCollectorSync(viewport, searchDistance, this.frame, CullType.FRUSTUM, this.level);
         this.occlusionCuller.findVisible(tree, viewport, searchDistance, useOcclusionCulling, CancellationToken.NEVER_CANCELLED);
@@ -280,6 +288,16 @@ public class RenderSectionManager {
                     latestTreeCullType = cullType;
 
                     this.needsRenderListUpdate = true;
+                    this.pendingGlobalCullTask = null;
+
+                    // mark changes on the global task tree if they were scheduled while the task was already running
+                    for (int i = 0, length = this.concurrentlySubmittedTasks.size(); i < length; i += 3) {
+                        var x = this.concurrentlySubmittedTasks.getInt(i);
+                        var y = this.concurrentlySubmittedTasks.getInt(i + 1);
+                        var z = this.concurrentlySubmittedTasks.getInt(i + 2);
+                        tree.markSectionTask(x, y, z);
+                    }
+                    this.concurrentlySubmittedTasks.clear();
                 }
                 case FrustumTaskCollectionTask collectionTask ->
                         this.frustumTaskLists = collectionTask.getResult().getFrustumTaskLists();
@@ -346,6 +364,10 @@ public class RenderSectionManager {
                 };
                 task.submitTo(this.asyncCullExecutor);
                 this.pendingTasks.add(task);
+
+                if (task instanceof GlobalCullTask globalCullTask) {
+                    this.pendingGlobalCullTask = globalCullTask;
+                }
             }
         }
     }
@@ -591,9 +613,20 @@ public class RenderSectionManager {
         }
     }
 
+    private boolean isSectionEmpty(int x, int y, int z) {
+        long key = SectionPos.asLong(x, y, z);
+        RenderSection section = this.sectionByPosition.get(key);
+
+        if (section == null) {
+            return true;
+        }
+
+        return !section.needsRender();
+    }
+
     // renderTree is not necessarily frustum-filtered but that is ok since the caller makes sure to eventually also perform a frustum test on the box being tested (see EntityRendererMixin)
     public boolean isBoxVisible(double x1, double y1, double z1, double x2, double y2, double z2) {
-        return this.renderTree == null || this.renderTree.isBoxVisible(x1, y1, z1, x2, y2, z2);
+        return this.renderTree == null || this.renderTree.isBoxVisible(x1, y1, z1, x2, y2, z2, this::isSectionEmpty);
     }
 
     public void uploadChunks() {
@@ -660,7 +693,7 @@ public class RenderSectionManager {
     }
 
     private boolean updateSectionInfo(RenderSection render, BuiltSectionInfo info) {
-        if (info == null || (info.flags & RenderSectionFlags.MASK_NEEDS_RENDER) == 0) {
+        if (info == null || !RenderSectionFlags.needsRender(info.flags)) {
             this.renderableSectionTree.remove(render);
         } else {
             this.renderableSectionTree.add(render);
@@ -768,6 +801,8 @@ public class RenderSectionManager {
             ChunkJobCollector importantCollector, ChunkJobCollector semiImportantCollector, ChunkJobCollector deferredCollector, long remainingUploadSize, Viewport viewport) {
         remainingUploadSize = submitImportantSectionTasks(importantCollector, remainingUploadSize, DeferMode.ZERO_FRAMES, viewport);
         remainingUploadSize = submitImportantSectionTasks(semiImportantCollector, remainingUploadSize, DeferMode.ONE_FRAME, viewport);
+        remainingUploadSize = submitImportantSectionTasks(deferredCollector, remainingUploadSize, DeferMode.ALWAYS, viewport);
+
         submitDeferredSectionTasks(deferredCollector, remainingUploadSize);
     }
 
@@ -864,13 +899,14 @@ public class RenderSectionManager {
     }
 
     private long submitImportantSectionTasks(ChunkJobCollector collector, long remainingUploadSize, DeferMode deferMode, Viewport viewport) {
-        var limitOnSize = deferMode != DeferMode.ZERO_FRAMES;
-        var it =  this.importantTasks.get(deferMode).iterator();
+        var it = this.importantTasks.get(deferMode).iterator();
+        var alwaysDeferImportantRebuilds = alwaysDeferImportantRebuilds();
 
-        while (it.hasNext() && collector.hasBudgetRemaining() && (!limitOnSize || remainingUploadSize > 0)) {
+        while (it.hasNext() && collector.hasBudgetRemaining() && (deferMode.allowsUnlimitedUploadSize() || remainingUploadSize > 0)) {
             var section = it.next();
             var pendingUpdate = section.getPendingUpdate();
-            if (pendingUpdate != null && pendingUpdate.getDeferMode() == deferMode) {
+            if (pendingUpdate != null && pendingUpdate.getDeferMode(alwaysDeferImportantRebuilds) == deferMode) {
+                // isSectionVisible includes a special case for not testing empty sections against the tree as they won't be in it
                 if (this.renderTree == null || this.renderTree.isSectionVisible(viewport, section)) {
                     remainingUploadSize -= submitSectionTask(collector, section, pendingUpdate);
                 } else {
@@ -1015,22 +1051,33 @@ public class RenderSectionManager {
 
     private ChunkUpdateType upgradePendingUpdate(RenderSection section, ChunkUpdateType type) {
         var current = section.getPendingUpdate();
-        type = ChunkUpdateType.getPromotionUpdateType(current, type);
+        type = ChunkUpdateType.getPromotedTypeChange(current, type);
 
-        // when the pending task type changes and it's important, add it to the list of important tasks
-        if (type != null && current != type) {
-            var deferMode = type.getDeferMode();
-            if (deferMode != DeferMode.ALWAYS) {
-                this.importantTasks.get(deferMode).add(section);
-            }
+        // if there was no change the upgraded type is null
+        if (type == null) {
+            return null;
         }
 
         section.setPendingUpdate(type, this.lastFrameAtTime);
 
-        // if the section received a new task, mark in the task tree so an update can happen before a global cull task runs
-        if (this.globalTaskTree != null && type != null && current == null) {
-            this.globalTaskTree.markSectionTask(section);
-            this.needsFrustumTaskListUpdate = true;
+        // when the pending task type changes, and it's important, add it to the list of important tasks
+        if (type.isImportant()) {
+            this.importantTasks.get(type.getDeferMode(alwaysDeferImportantRebuilds())).add(section);
+        } else {
+            // if the section received a new task, mark in the task tree so an update can happen before a global cull task runs
+            if (this.globalTaskTree != null && current == null) {
+                this.globalTaskTree.markSectionTask(section);
+                this.needsFrustumTaskListUpdate = true;
+
+                // when a global cull task is already running and has already processed the section, and we mark it with a pending task,
+                // the section will not be marked as having a task in the then replaced global tree and the derivative frustum tree also won't have it.
+                // Sections that are marked with a pending task while a task that may replace the global task tree is running are a added to a list from which the new global task tree is populated once it's done.
+                if (this.pendingGlobalCullTask != null) {
+                    this.concurrentlySubmittedTasks.add(section.getChunkX());
+                    this.concurrentlySubmittedTasks.add(section.getChunkY());
+                    this.concurrentlySubmittedTasks.add(section.getChunkZ());
+                }
+            }
         }
 
         return type;
@@ -1063,7 +1110,7 @@ public class RenderSectionManager {
         if (section != null && section.isBuilt()) {
             ChunkUpdateType pendingUpdate;
 
-            if (allowImportantRebuilds() && (important || this.shouldPrioritizeTask(section, NEARBY_REBUILD_DISTANCE))) {
+            if (important || this.shouldPrioritizeTask(section, NEARBY_REBUILD_DISTANCE)) {
                 pendingUpdate = ChunkUpdateType.IMPORTANT_REBUILD;
             } else {
                 pendingUpdate = ChunkUpdateType.REBUILD;
@@ -1074,11 +1121,15 @@ public class RenderSectionManager {
     }
 
     private boolean shouldPrioritizeTask(RenderSection section, float distance) {
-        return this.cameraBlockPos != null && section.getSquaredDistance(this.cameraBlockPos) < distance;
+        return this.cameraPosition != null && section.getSquaredDistance(
+                (float) this.cameraPosition.x(),
+                (float) this.cameraPosition.y(),
+                (float) this.cameraPosition.z()
+        ) < distance;
     }
 
-    private static boolean allowImportantRebuilds() {
-        return !SodiumClientMod.options().performance.alwaysDeferChunkUpdates;
+    private static boolean alwaysDeferImportantRebuilds() {
+        return SodiumClientMod.options().performance.alwaysDeferChunkUpdates;
     }
 
     private float getEffectiveRenderDistance() {
@@ -1160,6 +1211,18 @@ public class RenderSectionManager {
         list.add(String.format("Tasks: N0=%03d | N1=%03d | Def=%03d, Recv=%03d",
                 this.thisFrameBlockingTasks, this.nextFrameBlockingTasks, this.deferredTasks, this.buildResults.size())
         );
+
+        if (PlatformRuntimeInformation.getInstance().isDevelopmentEnvironment()) {
+            var meshTaskDuration = this.jobDurationEstimator.estimateJobDuration(ChunkBuilderMeshingTask.class, 1);
+            var sortTaskDuration = this.jobDurationEstimator.estimateJobDuration(ChunkBuilderSortingTask.class, 1);
+            list.add(String.format("Duration: Mesh=%dns, Sort=%dns", meshTaskDuration, sortTaskDuration));
+
+            var sizeEstimates = new StringBuilder();
+            for (var type : MeshResultSize.SectionCategory.values()) {
+                sizeEstimates.append(String.format("%s=%d, ", type, this.meshTaskSizeEstimator.estimateAWithB(type, 1)));
+            }
+            list.add(String.format("Size: %s", sizeEstimates));
+        }
 
         this.sortTriggering.addDebugStrings(list);
 
