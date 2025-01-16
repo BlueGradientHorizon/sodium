@@ -23,6 +23,7 @@ import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
 import net.caffeinemc.mods.sodium.client.util.BitwiseMath;
 import net.caffeinemc.mods.sodium.client.util.UInt32;
 import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.system.Pointer;
 
 import java.util.Iterator;
 
@@ -186,7 +187,7 @@ public class DefaultChunkRenderer extends ShaderChunkRenderer {
             MemoryUtil.memPutInt(pBaseVertex + (size << 2), UInt32.uncheckedDowncast(baseVertex));
 
             // * 4 to convert to bytes (the index buffer contains integers)
-            MemoryUtil.memPutAddress(pElementPointer + (size << 3), elementOffset << 2);
+            MemoryUtil.memPutAddress(pElementPointer + (size << Pointer.POINTER_SHIFT), elementOffset << 2);
 
             baseVertex += vertexCount;
             elementOffset += elementCount;
