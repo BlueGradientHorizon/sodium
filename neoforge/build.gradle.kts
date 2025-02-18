@@ -1,7 +1,7 @@
 plugins {
     id("multiloader-platform")
 
-    id("net.neoforged.moddev") version("2.0.42-beta")
+    id("net.neoforged.moddev") version("2.0.78")
 }
 
 base {
@@ -61,7 +61,7 @@ dependencies {
     jarJar(project(":neoforge", "service"))
 }
 
-val serviceJar = tasks.create<Jar>("serviceJar") {
+val serviceJar = tasks.register<Jar>("serviceJar") {
     from(configurationCommonServiceJava)
     from(configurationCommonServiceResources)
 

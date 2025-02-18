@@ -1,6 +1,5 @@
 package net.caffeinemc.mods.sodium.client.render.chunk;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceMap;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceMaps;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceOpenHashMap;
@@ -8,6 +7,7 @@ import it.unimi.dsi.fastutil.objects.Reference2ReferenceLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import it.unimi.dsi.fastutil.objects.ReferenceSet;
 import it.unimi.dsi.fastutil.objects.ReferenceSets;
+import net.caffeinemc.mods.sodium.api.texture.SpriteUtil;
 import net.caffeinemc.mods.sodium.client.SodiumClientMod;
 import net.caffeinemc.mods.sodium.client.gl.device.CommandList;
 import net.caffeinemc.mods.sodium.client.gl.device.RenderDevice;
@@ -15,8 +15,8 @@ import net.caffeinemc.mods.sodium.client.render.chunk.compile.BuilderTaskOutput;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.ChunkBuildOutput;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.ChunkSortOutput;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.executor.ChunkBuilder;
-import net.caffeinemc.mods.sodium.client.render.chunk.compile.executor.ChunkJobResult;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.executor.ChunkJobCollector;
+import net.caffeinemc.mods.sodium.client.render.chunk.compile.executor.ChunkJobResult;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.tasks.ChunkBuilderMeshingTask;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.tasks.ChunkBuilderSortingTask;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.tasks.ChunkBuilderTask;
@@ -37,7 +37,6 @@ import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.data.T
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.trigger.CameraMovement;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.trigger.SortTriggering;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkMeshFormats;
-import net.caffeinemc.mods.sodium.client.render.texture.SpriteUtil;
 import net.caffeinemc.mods.sodium.client.render.util.RenderAsserts;
 import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
 import net.caffeinemc.mods.sodium.client.render.viewport.Viewport;
@@ -48,6 +47,7 @@ import net.caffeinemc.mods.sodium.client.world.cloned.ClonedChunkSectionCache;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.FogParameters;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
@@ -128,18 +128,18 @@ public class RenderSectionManager {
         this.cameraPosition = cameraPosition;
     }
 
-    public void update(Camera camera, Viewport viewport, boolean spectator) {
+    public void update(Camera camera, Viewport viewport, FogParameters fogParameters, boolean spectator) {
         this.lastUpdatedFrame += 1;
 
-        this.createTerrainRenderList(camera, viewport, this.lastUpdatedFrame, spectator);
+        this.createTerrainRenderList(camera, viewport, fogParameters, this.lastUpdatedFrame, spectator);
 
         this.needsGraphUpdate = false;
     }
 
-    private void createTerrainRenderList(Camera camera, Viewport viewport, int frame, boolean spectator) {
+    private void createTerrainRenderList(Camera camera, Viewport viewport, FogParameters fogParameters, int frame, boolean spectator) {
         this.resetRenderLists();
 
-        final var searchDistance = this.getSearchDistance();
+        final var searchDistance = this.getSearchDistance(fogParameters);
         final var useOcclusionCulling = this.shouldUseOcclusionCulling(camera, spectator);
 
         var visitor = new VisibleChunkCollector(frame);
@@ -150,11 +150,11 @@ public class RenderSectionManager {
         this.taskLists = visitor.getRebuildLists();
     }
 
-    private float getSearchDistance() {
+    private float getSearchDistance(FogParameters fogParameters) {
         float distance;
 
         if (SodiumClientMod.options().performance.useFogOcclusion) {
-            distance = this.getEffectiveRenderDistance();
+            distance = this.getEffectiveRenderDistance(fogParameters);
         } else {
             distance = this.getRenderDistance();
         }
@@ -276,7 +276,7 @@ public class RenderSectionManager {
                 }
 
                 for (TextureAtlasSprite sprite : sprites) {
-                    SpriteUtil.markSpriteActive(sprite);
+                    SpriteUtil.INSTANCE.markSpriteActive(sprite);
                 }
             }
         }
@@ -328,9 +328,9 @@ public class RenderSectionManager {
                     result.render.setTranslucentData(chunkBuildOutput.translucentData);
                 }
             } else if (result instanceof ChunkSortOutput sortOutput
-                    && sortOutput.getTopoSorter() != null
+                    && sortOutput.getDynamicSorter() != null
                     && result.render.getTranslucentData() instanceof DynamicTopoData data) {
-                this.sortTriggering.applyTriggerChanges(data, sortOutput.getTopoSorter(), result.render.getPosition(), this.cameraPosition);
+                this.sortTriggering.applyTriggerChanges(data, sortOutput.getDynamicSorter(), result.render.getPosition(), this.cameraPosition);
             }
 
             var job = result.render.getTaskCancellationToken();
@@ -627,9 +627,9 @@ public class RenderSectionManager {
         return !SodiumClientMod.options().performance.alwaysDeferChunkUpdates;
     }
 
-    private float getEffectiveRenderDistance() {
-        var alpha = RenderSystem.getShaderFog().alpha();
-        var distance = RenderSystem.getShaderFog().end();
+    private float getEffectiveRenderDistance(FogParameters fogParameters) {
+        var alpha = fogParameters.alpha();
+        var distance = fogParameters.end();
 
         var renderDistance = this.getRenderDistance();
 
@@ -678,8 +678,10 @@ public class RenderSectionManager {
 
         int count = 0;
 
-        long deviceUsed = 0;
-        long deviceAllocated = 0;
+        long geometryDeviceUsed = 0;
+        long geometryDeviceAllocated = 0;
+        long indexDeviceUsed = 0;
+        long indexDeviceAllocated = 0;
 
         for (var region : this.regions.getLoadedRegions()) {
             var resources = region.getResources();
@@ -688,15 +690,20 @@ public class RenderSectionManager {
                 continue;
             }
 
-            var buffer = resources.getGeometryArena();
+            var geometryArena = resources.getGeometryArena();
+            geometryDeviceUsed += geometryArena.getDeviceUsedMemory();
+            geometryDeviceAllocated += geometryArena.getDeviceAllocatedMemory();
 
-            deviceUsed += buffer.getDeviceUsedMemory();
-            deviceAllocated += buffer.getDeviceAllocatedMemory();
+            var indexArena = resources.getIndexArena();
+            indexDeviceUsed += indexArena.getDeviceUsedMemory();
+            indexDeviceAllocated += indexArena.getDeviceAllocatedMemory();
 
             count++;
         }
 
-        list.add(String.format("Geometry Pool: %d/%d MiB (%d buffers)", MathUtil.toMib(deviceUsed), MathUtil.toMib(deviceAllocated), count));
+        list.add(String.format("Pools: Geometry %d/%d MiB, Index %d/%d MiB (%d buffers)",
+                MathUtil.toMib(geometryDeviceUsed), MathUtil.toMib(geometryDeviceAllocated),
+                MathUtil.toMib(indexDeviceUsed), MathUtil.toMib(indexDeviceAllocated), count));
         list.add(String.format("Transfer Queue: %s", this.regions.getStagingBuffer().toString()));
 
         list.add(String.format("Chunk Builder: Permits=%02d (E %03d) | Busy=%02d | Total=%02d",
