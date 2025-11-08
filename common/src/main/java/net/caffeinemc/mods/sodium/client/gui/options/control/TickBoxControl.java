@@ -3,7 +3,8 @@ package net.caffeinemc.mods.sodium.client.gui.options.control;
 import net.caffeinemc.mods.sodium.client.gui.options.Option;
 import net.caffeinemc.mods.sodium.client.util.Dim2i;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.navigation.CommonInputs;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.renderer.Rect2i;
 
 public class TickBoxControl implements Control<Boolean> {
@@ -65,11 +66,9 @@ public class TickBoxControl implements Control<Boolean> {
         }
 
         @Override
-        public boolean mouseClicked(double mouseX, double mouseY, int button) {
-            if (this.option.isAvailable() && button == 0 && this.dim.containsCursor(mouseX, mouseY)) {
+        public boolean mouseClicked(MouseButtonEvent event, boolean repeated) {
+            if (this.option.isAvailable() && event.button() == 0 && this.dim.containsCursor(event.x(), event.y())) {
                 toggleControl();
-                this.playClickSound();
-
                 return true;
             }
 
@@ -77,20 +76,19 @@ public class TickBoxControl implements Control<Boolean> {
         }
 
         @Override
-        public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        public boolean keyPressed(KeyEvent event) {
             if (!isFocused()) return false;
 
-            if (CommonInputs.selected(keyCode)) {
+            if (event.isSelection()) {
                 toggleControl();
-                this.playClickSound();
-
                 return true;
             }
 
             return false;
         }
 
-        public void toggleControl() {
+        private void toggleControl() {
+            this.playClickSound();
             this.option.setValue(!this.option.getValue());
         }
     }

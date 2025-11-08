@@ -3,13 +3,15 @@ package net.caffeinemc.mods.sodium.client.gui;
 import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.annotations.SerializedName;
 import net.caffeinemc.mods.sodium.client.gui.options.TextProvider;
+import net.caffeinemc.mods.sodium.client.render.chunk.DeferMode;
+import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.QuadSplittingMode;
 import net.caffeinemc.mods.sodium.client.services.PlatformRuntimeInformation;
 import net.caffeinemc.mods.sodium.client.util.FileUtil;
-import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.SortBehavior;
 import net.minecraft.client.GraphicsStatus;
 import net.minecraft.network.chat.Component;
+import org.jetbrains.annotations.NotNull;
+
 import java.io.FileReader;
 import java.io.IOException;
 import java.lang.reflect.Modifier;
@@ -24,6 +26,7 @@ public class SodiumGameOptions {
     public final AdvancedSettings advanced = new AdvancedSettings();
     public final PerformanceSettings performance = new PerformanceSettings();
     public final NotificationSettings notifications = new NotificationSettings();
+    public @NotNull DebugSettings debug = new DebugSettings();
 
     private boolean readOnly;
 
@@ -37,8 +40,7 @@ public class SodiumGameOptions {
 
     public static class PerformanceSettings {
         public int chunkBuilderThreads = 0;
-        @SerializedName("always_defer_chunk_updates_v2") // this will reset the option in older configs
-        public boolean alwaysDeferChunkUpdates = true;
+        public DeferMode chunkBuildDeferMode = DeferMode.ALWAYS;
 
         public boolean animateOnlyVisibleTextures = true;
         public boolean useEntityCulling = true;
@@ -46,12 +48,7 @@ public class SodiumGameOptions {
         public boolean useBlockFaceCulling = true;
         public boolean useNoErrorGLContext = true;
 
-        @SerializedName("sorting_enabled_v2") // reset the older option in configs before we started hiding it
-        public boolean sortingEnabled = true;
-
-        public SortBehavior getSortBehavior() {
-            return this.sortingEnabled ? SortBehavior.DYNAMIC_DEFER_NEARBY_ZERO_FRAMES : SortBehavior.OFF;
-        }
+        public QuadSplittingMode quadSplittingMode = QuadSplittingMode.SAFE;
     }
 
     public static class AdvancedSettings {
@@ -61,9 +58,13 @@ public class SodiumGameOptions {
         public int cpuRenderAheadLimit = 3;
     }
 
+    public static class DebugSettings {
+        public boolean terrainSortingEnabled = true;
+    }
+
     public static class QualitySettings {
-        public GraphicsQuality weatherQuality = GraphicsQuality.DEFAULT;
-        public GraphicsQuality leavesQuality = GraphicsQuality.DEFAULT;
+        public WeatherQuality weatherQuality = WeatherQuality.DEFAULT;
+        public LeavesQuality leavesQuality = LeavesQuality.DEFAULT;
 
         public boolean enableVignette = true;
     }
@@ -73,14 +74,14 @@ public class SodiumGameOptions {
         public boolean hasSeenDonationPrompt = false;
     }
 
-    public enum GraphicsQuality implements TextProvider {
+    public enum WeatherQuality implements TextProvider {
         DEFAULT("options.gamma.default"),
-        FANCY("options.clouds.fancy"),
-        FAST("options.clouds.fast");
+        FANCY("sodium.options.weather_quality.fancy"),
+        FAST("sodium.options.weather_quality.fast");
 
         private final Component name;
 
-        GraphicsQuality(String name) {
+        WeatherQuality(String name) {
             this.name = Component.translatable(name);
         }
 
@@ -89,8 +90,29 @@ public class SodiumGameOptions {
             return this.name;
         }
 
-        public boolean isFancy(GraphicsStatus graphicsStatus) {
-            return (this == FANCY) || (this == DEFAULT && (graphicsStatus == GraphicsStatus.FANCY || graphicsStatus == GraphicsStatus.FABULOUS));
+        public boolean isFancy(GraphicsStatus graphicsMode) {
+            return (this == FANCY) || (this == DEFAULT && (graphicsMode == GraphicsStatus.FANCY || graphicsMode == GraphicsStatus.FABULOUS));
+        }
+    }
+
+    public enum LeavesQuality implements TextProvider {
+        DEFAULT("options.gamma.default"),
+        FANCY("sodium.options.leaves_quality.fancy"),
+        FAST("sodium.options.leaves_quality.fast");
+
+        private final Component name;
+
+        LeavesQuality(String name) {
+            this.name = Component.translatable(name);
+        }
+
+        @Override
+        public Component getLocalizedName() {
+            return this.name;
+        }
+
+        public boolean isFancy(GraphicsStatus graphicsMode) {
+            return (this == FANCY) || (this == DEFAULT && (graphicsMode == GraphicsStatus.FANCY || graphicsMode == GraphicsStatus.FABULOUS));
         }
     }
 

@@ -1,7 +1,7 @@
 plugins {
     id("multiloader-platform")
 
-    id("fabric-loom") version ("1.9.2")
+    id("fabric-loom") version ("1.11.4")
 }
 
 base {
@@ -18,11 +18,11 @@ val configurationCommonModResources: Configuration = configurations.create("comm
 dependencies {
     configurationCommonModJava(project(path = ":common", configuration = "commonMainJava"))
     configurationCommonModJava(project(path = ":common", configuration = "commonApiJava"))
-    configurationCommonModJava(project(path = ":common", configuration = "commonEarlyLaunchJava"))
+    configurationCommonModJava(project(path = ":common", configuration = "commonBootJava"))
 
     configurationCommonModResources(project(path = ":common", configuration = "commonMainResources"))
     configurationCommonModResources(project(path = ":common", configuration = "commonApiResources"))
-    configurationCommonModResources(project(path = ":common", configuration = "commonEarlyLaunchResources"))
+    configurationCommonModResources(project(path = ":common", configuration = "commonBootResources"))
 }
 
 sourceSets.apply {
@@ -53,10 +53,13 @@ dependencies {
     // Fabric API modules
     addEmbeddedFabricModule("fabric-api-base")
     addEmbeddedFabricModule("fabric-block-view-api-v2")
+    addEmbeddedFabricModule("fabric-rendering-v1")
     addEmbeddedFabricModule("fabric-renderer-api-v1")
-    addEmbeddedFabricModule("fabric-rendering-data-attachment-v1")
+    addEmbeddedFabricModule("fabric-lifecycle-events-v1")
     addEmbeddedFabricModule("fabric-rendering-fluids-v1")
     addEmbeddedFabricModule("fabric-resource-loader-v0")
+    addEmbeddedFabricModule("fabric-resource-loader-v1")
+    addEmbeddedFabricModule("fabric-transitive-access-wideners-v1")
 }
 
 loom {

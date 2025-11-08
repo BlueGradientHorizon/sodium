@@ -37,7 +37,7 @@ import org.apache.commons.lang3.mutable.MutableFloat;
 import org.apache.commons.lang3.mutable.MutableInt;
 
 public class DefaultFluidRenderer {
-    // TODO: allow this to be changed by vertex format, WARNING: make sure TranslucentGeometryCollector knows about EPSILON
+    // TODO: allow this to be changed by vertex format, WARNING: make sure TQuad knows about EPSILON
     // TODO: move fluid rendering to a separate render pass and control glPolygonOffset and glDepthFunc to fix this properly
     public static final float EPSILON = 0.001f;
     private static final float ALIGNED_EQUALS_EPSILON = 0.011f;
@@ -84,7 +84,7 @@ public class DefaultFluidRenderer {
 
             VoxelShape threshold = Shapes.box(0.0D, 0.0D, 0.0D, 1.0D, height, 1.0D);
 
-            return !Shapes.blockOccudes(threshold, shape, dir);
+            return !Shapes.blockOccludes(threshold, shape, dir);
         }
 
         return true;
@@ -377,7 +377,7 @@ public class DefaultFluidRenderer {
 
         lighter.calculate(quad, pos, light, null, dir, false, false);
 
-        colorProvider.getColors(level, pos, scratchPos, fluidState, quad, this.quadColors);
+        colorProvider.getColors(level, pos, scratchPos, fluidState, quad, this.quadColors, level.hasBiomeBlend());
 
         // multiply the per-vertex color against the combined brightness
         // the combined brightness is the per-vertex brightness multiplied by the block's brightness
@@ -424,7 +424,10 @@ public class DefaultFluidRenderer {
                 normal = NormI8.flipPacked(normal);
             }
 
-            collector.appendQuad(normal, vertices, facing);
+            // discard the quad if it's invalid (i.e. not visible)
+            if (collector.appendQuad(vertices, facing, normal)) {
+                return;
+            }
         }
 
         var vertexBuffer = builder.getVertexBuffer(facing);

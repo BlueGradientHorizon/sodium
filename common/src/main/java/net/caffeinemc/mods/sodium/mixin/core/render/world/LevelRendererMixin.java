@@ -2,6 +2,9 @@ package net.caffeinemc.mods.sodium.mixin.core.render.world;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
+import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.vertex.PoseStack;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import net.caffeinemc.mods.sodium.client.gl.device.RenderDevice;
@@ -10,32 +13,47 @@ import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.render.viewport.ViewportProvider;
 import net.caffeinemc.mods.sodium.client.services.PlatformLevelRenderHooks;
 import net.caffeinemc.mods.sodium.client.util.FlawlessFrames;
+import net.caffeinemc.mods.sodium.client.util.FogStorage;
+import net.caffeinemc.mods.sodium.client.util.SodiumChunkSection;
 import net.caffeinemc.mods.sodium.client.world.LevelRendererExtension;
 import net.minecraft.client.Camera;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.*;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
+import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
+import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
+import net.minecraft.client.renderer.state.LevelRenderState;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.server.level.BlockDestructionProgress;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
 import org.joml.Vector4f;
 import org.spongepowered.asm.mixin.*;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.EnumMap;
+import java.util.List;
 import java.util.SortedSet;
 import java.util.function.Consumer;
 
 @Mixin(LevelRenderer.class)
 public abstract class LevelRendererMixin implements LevelRendererExtension {
+    @Unique
+    private static final EnumMap<ChunkSectionLayer, List<RenderPass.Draw<GpuBufferSlice[]>>> STATIC_MAP = new EnumMap<>(ChunkSectionLayer.class);
+
     @Shadow
     @Final
     private RenderBuffers renderBuffers;
@@ -56,13 +74,29 @@ public abstract class LevelRendererMixin implements LevelRendererExtension {
     private Minecraft minecraft;
 
     @Shadow
-    private Frustum cullingFrustum;
+    private int lastCameraSectionX;
 
+    @Shadow
+    private int lastCameraSectionY;
+
+    @Shadow
+    private int lastCameraSectionZ;
+
+    @Shadow
+    @Final
+    private WorldBorderRenderer worldBorderRenderer;
+
+    @Shadow
+    @Final
+    private SubmitNodeStorage submitNodeStorage;
+    @Shadow
+    @Final
+    private LevelRenderState levelRenderState;
     @Unique
     private SodiumWorldRenderer renderer;
 
     @Unique
-    private FogParameters sodium$terrainFogParmaeters = FogParameters.NO_FOG;
+    private ChunkRenderMatrices matrices;
 
     @Override
     public SodiumWorldRenderer sodium$getWorldRenderer() {
@@ -76,7 +110,7 @@ public abstract class LevelRendererMixin implements LevelRendererExtension {
     }
 
     @Inject(method = "<init>", at = @At("RETURN"))
-    private void init(Minecraft client, EntityRenderDispatcher entityRenderDispatcher, BlockEntityRenderDispatcher blockEntityRenderDispatcher, RenderBuffers bufferBuilderStorage, CallbackInfo ci) {
+    private void init(Minecraft client, EntityRenderDispatcher entityRenderDispatcher, BlockEntityRenderDispatcher blockEntityRenderDispatcher, RenderBuffers renderBuffers, LevelRenderState levelRenderState, FeatureRenderDispatcher featureRenderDispatcher, CallbackInfo ci) {
         this.renderer = new SodiumWorldRenderer(client);
     }
 
@@ -115,32 +149,19 @@ public abstract class LevelRendererMixin implements LevelRendererExtension {
     }
 
     /**
-     * @reason Redirect the chunk layer render passes to our renderer
-     * @author JellySquid
+     * @reason Redirect to our renderer
+     * @author IMS
      */
     @Overwrite
-    private void renderSectionLayer(RenderType renderLayer, double x, double y, double z, Matrix4f modelMatrix, Matrix4f projectionMatrix) {
-        RenderDevice.enterManagedCode();
-
-        try {
-            this.renderer.drawChunkLayer(renderLayer, new ChunkRenderMatrices(projectionMatrix, modelMatrix), x, y, z);
-        } finally {
-            RenderDevice.exitManagedCode();
-        }
-
-        PlatformLevelRenderHooks.getInstance().runChunkLayerEvents(renderLayer, ((LevelRenderer) (Object) this), modelMatrix, projectionMatrix, this.ticks, this.minecraft.gameRenderer.getMainCamera(), this.cullingFrustum);
+    private ChunkSectionsToRender prepareChunkRenders(Matrix4fc matrix4fc, double x, double y, double z) {
+        ChunkSectionsToRender chunkSectionsToRender = new ChunkSectionsToRender(STATIC_MAP, -1, new GpuBufferSlice[0]);
+        ((SodiumChunkSection) (Object) chunkSectionsToRender).sodium$setRendering(renderer, matrices, x, y, z);
+        return chunkSectionsToRender;
     }
 
-    @WrapOperation(
-            method = "renderLevel",
-            at = @At(
-                    value = "INVOKE",
-                    target = "Lnet/minecraft/client/renderer/FogRenderer;setupFog(Lnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/FogRenderer$FogMode;Lorg/joml/Vector4f;FZF)Lnet/minecraft/client/renderer/FogParameters;",
-                    ordinal = 0
-            )
-    )
-    private FogParameters captureTerrainFogParameters(Camera camera, FogRenderer.FogMode fogMode, Vector4f fogColor, float renderDistance, boolean isFoggy, float partialTick, Operation<FogParameters> original) {
-        return (this.sodium$terrainFogParmaeters = original.call(camera, fogMode, fogColor, renderDistance, isFoggy, partialTick));
+    @Inject(method = "renderLevel", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/LevelRenderer;cullTerrain(Lnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/culling/Frustum;Z)V"))
+    private void sodium$setMatrices(GraphicsResourceAllocator graphicsResourceAllocator, DeltaTracker deltaTracker, boolean bl, Camera camera, Matrix4f matrix4f, Matrix4f matrix4f2, Matrix4f matrix4f3, GpuBufferSlice gpuBufferSlice, Vector4f vector4f, boolean bl2, CallbackInfo ci) {
+        matrices = new ChunkRenderMatrices(matrix4f2, matrix4f);
     }
 
     /**
@@ -148,14 +169,25 @@ public abstract class LevelRendererMixin implements LevelRendererExtension {
      * @author JellySquid
      */
     @Overwrite
-    private void setupRender(Camera camera, Frustum frustum, boolean hasForcedFrustum, boolean spectator) {
+    private void cullTerrain(Camera camera, Frustum frustum, boolean spectator) {
         var viewport = ((ViewportProvider) frustum).sodium$createViewport();
         var updateChunksImmediately = FlawlessFrames.isActive();
+
+        int sectionX = SectionPos.posToSectionCoord(camera.getPosition().x());
+        int sectionY = SectionPos.posToSectionCoord(camera.getPosition().y());
+        int sectionZ = SectionPos.posToSectionCoord(camera.getPosition().z());
+
+        if (this.lastCameraSectionX != sectionX || this.lastCameraSectionY != sectionY || this.lastCameraSectionZ != sectionZ) {
+            this.lastCameraSectionX = sectionX;
+            this.lastCameraSectionY = sectionY;
+            this.lastCameraSectionZ = sectionZ;
+            this.worldBorderRenderer.invalidate();
+        }
 
         RenderDevice.enterManagedCode();
 
         try {
-            this.renderer.setupTerrain(camera, viewport, this.sodium$terrainFogParmaeters, spectator, updateChunksImmediately);
+            this.renderer.setupTerrain(camera, viewport, ((FogStorage) this.minecraft.gameRenderer).sodium$getFogParameters(), spectator, updateChunksImmediately, matrices);
         } finally {
             RenderDevice.exitManagedCode();
         }
@@ -217,10 +249,11 @@ public abstract class LevelRendererMixin implements LevelRendererExtension {
         }
     }
 
-    @Overwrite
-    private void renderBlockEntities(PoseStack poseStack, MultiBufferSource.BufferSource bufferSource, MultiBufferSource.BufferSource bufferSource2, Camera camera, float f) {
-        // TODO 1.21.2: Add the NeoForge glowing patch
-        this.renderer.renderBlockEntities(new PoseStack(), this.renderBuffers, this.destructionProgress, camera, f, null);
+    @Inject(method = "extractVisibleBlockEntities(Lnet/minecraft/client/Camera;FLnet/minecraft/client/renderer/state/LevelRenderState;)V", at = @At("HEAD"), cancellable = true, require = 1)
+    private void extractVisibleBlockEntities(Camera camera, float f, LevelRenderState levelRenderState, CallbackInfo ci) {
+        ci.cancel();
+
+        this.renderer.extractBlockEntities(camera, f, this.destructionProgress, levelRenderState);
     }
 
     // Exclusive to NeoForge, allow to fail.
@@ -239,5 +272,15 @@ public abstract class LevelRendererMixin implements LevelRendererExtension {
     @Overwrite
     public String getSectionStatistics() {
         return this.renderer.getChunksDebugString();
+    }
+
+    @Override
+    public void sodium$setMatrices(ChunkRenderMatrices matrices) {
+        this.matrices = matrices;
+    }
+
+    @Override
+    public ChunkRenderMatrices sodium$getMatrices() {
+        return this.matrices;
     }
 }

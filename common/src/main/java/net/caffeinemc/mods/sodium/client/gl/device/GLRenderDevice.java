@@ -9,7 +9,6 @@ import net.caffeinemc.mods.sodium.client.gl.sync.GlFence;
 import net.caffeinemc.mods.sodium.client.gl.tessellation.*;
 import net.caffeinemc.mods.sodium.client.gl.util.EnumBitField;
 import org.lwjgl.opengl.*;
-import com.mojang.blaze3d.vertex.BufferUploader;
 import java.nio.ByteBuffer;
 
 public class GLRenderDevice implements RenderDevice {
@@ -34,8 +33,6 @@ public class GLRenderDevice implements RenderDevice {
         if (this.isActive) {
             return;
         }
-
-        BufferUploader.reset();
 
         this.stateTracker.clear();
         this.isActive = true;
@@ -72,6 +69,11 @@ public class GLRenderDevice implements RenderDevice {
         }
 
         return 8;
+    }
+
+    @Override
+    public int getMaxTextureLodBias() {
+        return GL30C.glGetInteger(GL30C.GL_MAX_TEXTURE_LOD_BIAS);
     }
 
     private void checkDeviceActive() {

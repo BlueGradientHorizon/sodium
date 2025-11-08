@@ -2,7 +2,7 @@ plugins {
     id("multiloader-base")
     id("java-library")
 
-    id("fabric-loom") version ("1.9.2")
+    id("fabric-loom") version ("1.11.4")
 }
 
 base {
@@ -16,7 +16,7 @@ val configurationPreLaunch = configurations.create("preLaunchDeps") {
 sourceSets {
     val main = getByName("main")
     val api = create("api")
-    val workarounds = create("workarounds")
+    val boot = create("boot")
 
     api.apply {
         java {
@@ -24,7 +24,7 @@ sourceSets {
         }
     }
 
-    workarounds.apply {
+    boot.apply {
         java {
             compileClasspath += configurationPreLaunch
         }
@@ -33,11 +33,15 @@ sourceSets {
     main.apply {
         java {
             compileClasspath += api.output
-            compileClasspath += workarounds.output
+            compileClasspath += boot.output
         }
     }
 
     create("desktop")
+}
+
+repositories {
+    mavenLocal()
 }
 
 dependencies {
@@ -63,7 +67,6 @@ dependencies {
     addDependentFabricModule("fabric-api-base")
     addDependentFabricModule("fabric-block-view-api-v2")
     addDependentFabricModule("fabric-renderer-api-v1")
-    addDependentFabricModule("fabric-rendering-data-attachment-v1")
 
     // We need to be careful during pre-launch that we don't touch any Minecraft classes, since other mods
     // will not yet have an opportunity to apply transformations.
@@ -120,7 +123,7 @@ fun exportSourceSet(name: String, sourceSet: SourceSet) {
 
 exportSourceSet("commonMain", sourceSets["main"])
 exportSourceSet("commonApi", sourceSets["api"])
-exportSourceSet("commonEarlyLaunch", sourceSets["workarounds"])
+exportSourceSet("commonBoot", sourceSets["boot"])
 exportSourceSet("commonDesktop", sourceSets["desktop"])
 
 tasks.jar { enabled = false }

@@ -17,10 +17,10 @@ import net.caffeinemc.mods.sodium.client.render.chunk.lists.ChunkRenderListItera
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.caffeinemc.mods.sodium.client.render.chunk.shader.ChunkShaderInterface;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
-import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.SortBehavior;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkVertexType;
 import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
 import net.caffeinemc.mods.sodium.client.util.BitwiseMath;
+import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.caffeinemc.mods.sodium.client.util.UInt32;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.system.Pointer;
@@ -46,11 +46,13 @@ public class DefaultChunkRenderer extends ShaderChunkRenderer {
                        CommandList commandList,
                        ChunkRenderListIterable renderLists,
                        TerrainRenderPass renderPass,
-                       CameraTransform camera) {
-        super.begin(renderPass);
+                       CameraTransform camera,
+                       FogParameters parameters,
+                       boolean indexedRenderingEnabled) {
+        super.begin(renderPass, parameters);
 
         final boolean useBlockFaceCulling = SodiumClientMod.options().performance.useBlockFaceCulling;
-        final boolean useIndexedTessellation = isTranslucentRenderPass(renderPass);
+        final boolean useIndexedTessellation = renderPass.isTranslucent() && indexedRenderingEnabled;
 
         ChunkShaderInterface shader = this.activeProgram.getInterface();
         shader.setProjectionMatrix(matrices.projection());
@@ -96,10 +98,6 @@ public class DefaultChunkRenderer extends ShaderChunkRenderer {
         }
 
         super.end(renderPass);
-    }
-
-    private static boolean isTranslucentRenderPass(TerrainRenderPass renderPass) {
-        return renderPass.isTranslucent() && SodiumClientMod.options().performance.getSortBehavior() != SortBehavior.OFF;
     }
 
     private static void fillCommandBuffer(MultiDrawBatch batch,

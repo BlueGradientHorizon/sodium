@@ -1,5 +1,11 @@
 package net.caffeinemc.mods.sodium.client.render.chunk;
 
+import com.mojang.blaze3d.opengl.GlConst;
+import com.mojang.blaze3d.opengl.GlDevice;
+import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.systems.RenderSystem;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import net.caffeinemc.mods.sodium.client.gl.attribute.GlVertexFormat;
 import net.caffeinemc.mods.sodium.client.gl.device.CommandList;
@@ -8,6 +14,8 @@ import net.caffeinemc.mods.sodium.client.render.chunk.shader.*;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkVertexType;
 import net.caffeinemc.mods.sodium.client.gl.shader.*;
+import net.caffeinemc.mods.sodium.client.util.FogParameters;
+import net.caffeinemc.mods.sodium.mixin.core.GlCommandEncoderAccessor;
 import net.minecraft.resources.ResourceLocation;
 import java.util.Map;
 
@@ -38,7 +46,7 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
     }
 
     private GlProgram<ChunkShaderInterface> createShader(String path, ChunkShaderOptions options) {
-        ShaderConstants constants = options.constants();
+        ShaderConstants constants = createShaderConstants(options);
 
         GlShader vertShader = ShaderLoader.loadShader(ShaderType.VERTEX,
                 ResourceLocation.fromNamespaceAndPath("sodium", path + ".vsh"), constants);
@@ -62,15 +70,34 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
         }
     }
 
-    protected void begin(TerrainRenderPass pass) {
-        pass.startDrawing();
+    private static ShaderConstants createShaderConstants(ChunkShaderOptions options) {
+        ShaderConstants.Builder builder = ShaderConstants.builder();
+        builder.addAll(options.fog().getDefines());
+
+        if (options.pass().supportsFragmentDiscard()) {
+            builder.add("USE_FRAGMENT_DISCARD");
+        }
+
+        builder.add("USE_VERTEX_COMPRESSION"); // TODO: allow compact vertex format to be disabled
+        builder.add("MAX_TEXTURE_LOD_BIAS", String.valueOf(RenderDevice.INSTANCE.getMaxTextureLodBias()));
+
+        return builder.build();
+    }
+
+    protected void begin(TerrainRenderPass pass, FogParameters parameters) {
+        RenderTarget target = pass.getTarget();
+
+        GlStateManager._viewport(0, 0, target.getColorTexture().getWidth(0), target.getColorTexture().getHeight(0));
+        GlStateManager._glBindFramebuffer(GlConst.GL_FRAMEBUFFER, ((GlTexture) target.getColorTexture()).getFbo(((GlDevice) RenderSystem.getDevice()).directStateAccess(), target.getDepthTexture()));
+        ((GlCommandEncoderAccessor) RenderSystem.getDevice().createCommandEncoder()).sodium$applyPipelineState(pass.getPipeline());
+        ((GlCommandEncoderAccessor) RenderSystem.getDevice().createCommandEncoder()).sodium$setLastProgram(null);
 
         ChunkShaderOptions options = new ChunkShaderOptions(ChunkFogMode.SMOOTH, pass, this.vertexType);
 
         this.activeProgram = this.compileProgram(options);
         this.activeProgram.bind();
         this.activeProgram.getInterface()
-                .setupState();
+                .setupState(pass, parameters);
     }
 
     protected void end(TerrainRenderPass pass) {
@@ -78,8 +105,6 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
                 .resetState();
         this.activeProgram.unbind();
         this.activeProgram = null;
-
-        pass.endDrawing();
     }
 
     @Override

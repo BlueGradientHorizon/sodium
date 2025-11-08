@@ -7,6 +7,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FormattedText;
 import org.jetbrains.annotations.NotNull;
@@ -48,23 +50,17 @@ public class ScreenPrompt implements GuiEventListener, Renderable {
     }
 
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-        var matrices = graphics.pose();
-        matrices.pushPose();
-        matrices.translate(0.0f, 0.0f, 1000.0f);
-
         var parentDimensions = this.parent.getDimensions();
 
         graphics.fill(0, 0, parentDimensions.width(), parentDimensions.height(), 0x70090909);
 
-        matrices.translate(0.0f, 0.0f, 50.0f);
 
         int boxX = (parentDimensions.width() / 2) - (width / 2);
         int boxY = (parentDimensions.height() / 2) - (height / 2);
 
         graphics.fill(boxX, boxY, boxX + width, boxY + height, 0xFF171717);
-        graphics.renderOutline(boxX, boxY, width, height, 0xFF121212);
+        graphics.submitOutline(boxX, boxY, width, height, 0xFF121212);
 
-        matrices.translate(0.0f, 0.0f, 50.0f);
 
         int padding = 5;
 
@@ -90,8 +86,6 @@ public class ScreenPrompt implements GuiEventListener, Renderable {
         for (var button : getWidgets()) {
             button.render(graphics, mouseX, mouseY, delta);
         }
-
-        matrices.popPose();
     }
 
     private static FlatButtonWidget.Style createButtonStyle() {
@@ -121,9 +115,9 @@ public class ScreenPrompt implements GuiEventListener, Renderable {
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean repeated) {
         for (var widget : this.getWidgets()) {
-            if (widget.mouseClicked(mouseX, mouseY, button)) {
+            if (widget.mouseClicked(event, repeated)) {
                 return true;
             }
         }
@@ -132,13 +126,13 @@ public class ScreenPrompt implements GuiEventListener, Renderable {
     }
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+    public boolean keyPressed(KeyEvent event) {
+        if (event.isEscape()) {
             this.close();
             return true;
         }
 
-        return GuiEventListener.super.keyPressed(keyCode, scanCode, modifiers);
+        return GuiEventListener.super.keyPressed(event);
     }
 
     @Override

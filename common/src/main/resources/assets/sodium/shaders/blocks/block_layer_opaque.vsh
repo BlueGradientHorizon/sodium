@@ -3,21 +3,16 @@
 #import <sodium:include/fog.glsl>
 #import <sodium:include/chunk_vertex.glsl>
 #import <sodium:include/chunk_matrices.glsl>
-#import <sodium:include/chunk_material.glsl>
 
 out vec4 v_Color;
 out vec2 v_TexCoord;
 
-out float v_MaterialMipBias;
-#ifdef USE_FRAGMENT_DISCARD
-out float v_MaterialAlphaCutoff;
-#endif
+flat out uint v_Material;
 
 #ifdef USE_FOG
-out float v_FragDistance;
+out vec2 v_FragDistance;
 #endif
 
-uniform int u_FogShape;
 uniform vec3 u_RegionOffset;
 uniform vec2 u_TexCoordShrink;
 
@@ -40,7 +35,7 @@ void main() {
     vec3 position = _vert_position + translation;
 
 #ifdef USE_FOG
-    v_FragDistance = getFragDistance(u_FogShape, position);
+    v_FragDistance = getFragDistance(position);
 #endif
 
     // Transform the vertex position into model-view-projection space
@@ -50,8 +45,5 @@ void main() {
     v_Color = _vert_color * texture(u_LightTex, _vert_tex_light_coord);
     v_TexCoord = (_vert_tex_diffuse_coord_bias * u_TexCoordShrink) + _vert_tex_diffuse_coord; // FMA for precision
 
-    v_MaterialMipBias = _material_mip_bias(_material_params);
-#ifdef USE_FRAGMENT_DISCARD
-    v_MaterialAlphaCutoff = _material_alpha_cutoff(_material_params);
-#endif
+    v_Material = _material_params;
 }

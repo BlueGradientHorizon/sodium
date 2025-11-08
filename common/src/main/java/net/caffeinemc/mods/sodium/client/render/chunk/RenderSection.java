@@ -1,12 +1,13 @@
 package net.caffeinemc.mods.sodium.client.render.chunk;
 
+import net.caffeinemc.mods.sodium.client.render.chunk.compile.estimation.MeshResultSize;
+import net.caffeinemc.mods.sodium.client.render.chunk.compile.executor.ChunkJob;
 import net.caffeinemc.mods.sodium.client.render.chunk.data.BuiltSectionInfo;
 import net.caffeinemc.mods.sodium.client.render.chunk.occlusion.GraphDirection;
 import net.caffeinemc.mods.sodium.client.render.chunk.occlusion.GraphDirectionSet;
 import net.caffeinemc.mods.sodium.client.render.chunk.occlusion.VisibilityEncoding;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.data.TranslucentData;
-import net.caffeinemc.mods.sodium.client.util.task.CancellationToken;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
@@ -53,10 +54,11 @@ public class RenderSection {
 
     // Pending Update State
     @Nullable
-    private CancellationToken taskCancellationToken = null;
+    private ChunkJob runningJob = null;
+    private long lastMeshResultSize = MeshResultSize.NO_DATA;
 
-    @Nullable
-    private ChunkUpdateType pendingUpdateType;
+    private int pendingUpdateType;
+    private long pendingUpdateSince;
 
     private int lastUploadFrame = -1;
     private int lastSubmittedFrame = -1;
@@ -130,9 +132,9 @@ public class RenderSection {
      * be used.
      */
     public void delete() {
-        if (this.taskCancellationToken != null) {
-            this.taskCancellationToken.setCancelled();
-            this.taskCancellationToken = null;
+        if (this.runningJob != null) {
+            this.runningJob.setCancelled();
+            this.runningJob = null;
         }
 
         this.clearRenderState();
@@ -177,6 +179,14 @@ public class RenderSection {
 
         // changes to data if it moves from built to not built don't matter, so only build state changes matter
         return wasBuilt;
+    }
+
+    public void setLastMeshResultSize(long size) {
+        this.lastMeshResultSize = size;
+    }
+
+    public long getLastMeshResultSize() {
+        return this.lastMeshResultSize;
     }
 
     /**
@@ -339,20 +349,29 @@ public class RenderSection {
         return this.globalBlockEntities;
     }
 
-    public @Nullable CancellationToken getTaskCancellationToken() {
-        return this.taskCancellationToken;
+    public @Nullable ChunkJob getRunningJob() {
+        return this.runningJob;
     }
 
-    public void setTaskCancellationToken(@Nullable CancellationToken token) {
-        this.taskCancellationToken = token;
+    public void setRunningJob(@Nullable ChunkJob token) {
+        this.runningJob = token;
     }
 
-    public @Nullable ChunkUpdateType getPendingUpdate() {
+    public int getPendingUpdate() {
         return this.pendingUpdateType;
     }
 
-    public void setPendingUpdate(@Nullable ChunkUpdateType type) {
+    public long getPendingUpdateSince() {
+        return this.pendingUpdateSince;
+    }
+
+    public void setPendingUpdate(int type, long now) {
         this.pendingUpdateType = type;
+        this.pendingUpdateSince = now;
+    }
+
+    public void clearPendingUpdate() {
+        this.pendingUpdateType = 0;
     }
 
     public void prepareTrigger(boolean isDirectTrigger) {

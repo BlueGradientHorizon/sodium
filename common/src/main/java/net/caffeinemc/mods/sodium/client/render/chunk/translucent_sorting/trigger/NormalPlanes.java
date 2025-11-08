@@ -3,6 +3,7 @@ package net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.trigg
 import it.unimi.dsi.fastutil.floats.FloatOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Object2ReferenceMap;
 import net.caffeinemc.mods.sodium.client.model.quad.properties.ModelQuadFacing;
+import net.caffeinemc.mods.sodium.client.util.MathUtil;
 import net.caffeinemc.mods.sodium.client.util.interval_tree.DoubleInterval;
 import net.caffeinemc.mods.sodium.client.util.interval_tree.Interval.Bounded;
 import net.minecraft.core.SectionPos;
@@ -56,7 +57,8 @@ public class NormalPlanes {
         var size = this.relativeDistancesSet.size();
         this.relativeDistances = new float[this.relativeDistancesSet.size()];
         int i = 0;
-        for (float relDistance : this.relativeDistancesSet) {
+        for (var it = this.relativeDistancesSet.iterator(); it.hasNext(); ) {
+            float relDistance = it.nextFloat();
             this.relativeDistances[i++] = relDistance;
 
             long distanceBits = Double.doubleToLongBits(relDistance);
@@ -66,8 +68,8 @@ public class NormalPlanes {
         // sort the array ascending
         Arrays.sort(this.relativeDistances);
 
-        this.baseDistance = this.normal.dot(
-                this.sectionPos.minBlockX(), this.sectionPos.minBlockY(), this.sectionPos.minBlockZ());
+        // make sure to use double-based dot product math here to prevent incorrect sort triggering
+        this.baseDistance = MathUtil.floatDoubleDot(this.normal, this.sectionPos.minBlockX(), this.sectionPos.minBlockY(), this.sectionPos.minBlockZ());
         this.distanceRange = new DoubleInterval(
                 this.relativeDistances[0] + this.baseDistance,
                 this.relativeDistances[size - 1] + this.baseDistance,
